@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>倉庫番 ボックス押しレベルメーカー＆BFSソルバー</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .cell {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      border: 1px solid #334155;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.1s;
+    }
+    .cell:hover { filter: brightness(1.3); }
+    .cell-floor { background: #1e293b; }
+    .cell-wall { background: #475569; }
+    .cell-goal { background: #1e3a2e; }
+    .cell-box { background: #92400e; }
+    .cell-box-on-goal { background: #166534; }
+    .cell-player { background: #1e293b; }
+    .cell-player-on-goal { background: #1e3a2e; }
+    #grid { display: inline-grid; border: 2px solid #475569; }
+    .mode-btn { transition: all 0.15s; }
+    .mode-btn.active { ring: 2px; }
+  </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center py-6 px-2">
+  <h1 class="text-2xl font-bold mb-2 text-amber-400">📦 倉庫番 レベルメーカー＆BFSソルバー</h1>
+
+  <!-- Mode Tabs -->
+  <div class="flex gap-2 mb-4">
+    <button id="tab-play" class="mode-btn bg-blue-700 px-4 py-1 rounded text-sm font-semibold">プレイ</button>
+    <button id="tab-edit" class="mode-btn bg-gray-700 px-4 py-1 rounded text-sm font-semibold">エディタ</button>
+    <button id="tab-levels" class="mode-btn bg-gray-700 px-4 py-1 rounded text-sm font-semibold">クラシック</button>
+  </div>
+
+  <!-- Level select (classic) -->
+  <div id="level-selector" class="hidden mb-3 flex gap-2 flex-wrap justify-center">
+    <span class="text-sm text-gray-400">Microban Level:</span>
+  </div>
+
+  <!-- Play controls -->
+  <div id="play-controls" class="flex gap-2 mb-4 flex-wrap justify-center">
+    <button id="btn-undo" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">↩ Undo</button>
+    <button id="btn-restart" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">🔄 リセット</button>
+    <button id="btn-solve" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-sm font-semibold">🤖 BFSで解く</button>
+    <button id="btn-play-solution" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-sm font-semibold hidden">▶ 解を再生</button>
+  </div>
+
+  <!-- Edit palette -->
+  <div id="edit-palette" class="hidden flex gap-2 mb-4 flex-wrap justify-center">
+    <span class="text-sm text-gray-400 self-center">ペン:</span>
+    <button data-tile="wall" class="tile-btn bg-gray-500 px-3 py-1 rounded text-sm font-semibold border-2 border-transparent">🧱 壁</button>
+    <button data-tile="floor" class="tile-btn bg-gray-800 px-3 py-1 rounded text-sm font-semibold border-2 border-transparent">⬜ 床</button>
+    <button data-tile="goal" class="tile-btn bg-green-900 px-3 py-1 rounded text-sm font-semibold border-2 border-transparent">🎯 ゴール</button>
+    <button data-tile="box" class="tile-btn bg-amber-800 px-3 py-1 rounded text-sm font-semibold border-2 border-transparent">📦 箱</button>
+    <button data-tile="player" class="tile-btn bg-blue-800 px-3 py-1 rounded text-sm font-semibold border-2 border-transparent">🧑 人</button>
+    <button id="btn-load-custom" class="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded text-sm font-semibold">プレイモードで開く</button>
+  </div>
+
+  <div class="flex gap-4 mb-3 text-sm">
+    <span class="bg-gray-800 rounded px-3 py-1">手数: <span id="moves-count" class="text-yellow-400 font-bold">0</span></span>
+    <span class="bg-gray-800 rounded px-3 py-1">プッシュ: <span id="push-count" class="text-yellow-400 font-bold">0</span></span>
+  </div>
+
+  <div id="grid" class="mb-4"></div>
+
+  <!-- Direction buttons -->
+  <div id="dpad" class="grid grid-cols-3 gap-1 mb-4" style="width:120px">
+    <div></div>
+    <button id="d-up" class="bg-gray-700 hover:bg-gray-600 rounded py-2 text-lg">▲</button>
+    <div></div>
+    <button id="d-left" class="bg-gray-700 hover:bg-gray-600 rounded py-2 text-lg">◀</button>
+    <div class="bg-gray-800 rounded flex items-center justify-center text-xs text-gray-500">方向</div>
+    <button id="d-right" class="bg-gray-700 hover:bg-gray-600 rounded py-2 text-lg">▶</button>
+    <div></div>
+    <button id="d-down" class="bg-gray-700 hover:bg-gray-600 rounded py-2 text-lg">▼</button>
+    <div></div>
+  </div>
+
+  <div id="status-msg" class="text-sm text-gray-300 text-center"></div>
+
+  <script>
+    // Tile types
+    const T = { WALL:'#', FLOOR:' ', GOAL:'.', BOX:'$', PLAYER:'@', BOX_GOAL:'*', PLAYER_GOAL:'+' };
+
+    // Microban levels 1-10
+    const LEVELS = [
+      // Level 1
+      `#####\n#   #\n# $  #\n#  .##\n## @ #\n  ####`,
+      // Level 2
+      `######\n#    #\n# #$ #\n#. .##\n## $#\n # @#\n ####`,
+      // Level 3
+      ` ####\n##  ###\n#  $ .#\n# . $ #\n###  ##\n  ####`,
+      // Level 4 (simple)
+      `####\n# .#\n#  ###\n#*@  #\n#  $ #\n#  ###\n####`,
+      // Level 5
+      ` ####\n #  #\n # $##\n # $ #\n ## .#\n  #@##\n  ###`,
+      // Level 6
+      `#######\n#     #\n# .$. #\n#  @  #\n# .$. #\n#     #\n#######`,
+      // Level 7
+      `  ####\n###  #\n#    ##\n# # $.#\n#@$.  #\n#######`,
+      // Level 8
+      `####\n#  ###\n# $  #\n# .$ #\n##.@ #\n #####`,
+      // Level 9
+      ` #####\n##   #\n#  ##.#\n# $@  #\n## $  #\n #. ###\n ####`,
+      // Level 10
+      `  #####\n  #   #\n###$# #\n#. $ @#\n# . ###\n#####`,
+    ];
+
+    const LEVEL_NAMES = ['Microban #1','Microban #2','Microban #3','Microban #4','Microban #5',
+                         'Microban #6','Microban #7','Microban #8','Microban #9','Microban #10'];
+
+    let mode = 'play'; // 'play' | 'edit' | 'levels'
+    let gameState = null; // { grid: 2D, player: [r,c], history: [] }
+    let movesCount=0, pushCount=0;
+    let editTile = 'wall';
+    let editGrid = null; // for editor
+    let solutionMoves = null;
+    let isPlayingAnim = false;
+
+    function parseLevel(str) {
+      const lines = str.split('\n');
+      const rows = lines.length;
+      const cols = Math.max(...lines.map(l=>l.length));
+      const grid = [];
+      let playerPos = [1,1];
+      for (let r=0;r<rows;r++) {
+        const row = [];
+        for (let c=0;c<cols;c++) {
+          const ch = lines[r][c]||' ';
+          row.push(ch);
+          if (ch===T.PLAYER||ch===T.PLAYER_GOAL) playerPos=[r,c];
+        }
+        grid.push(row);
+      }
+      return { grid, player: playerPos, history: [] };
+    }
+
+    function cloneState(s) {
+      return { grid: s.grid.map(r=>[...r]), player:[...s.player], history: s.history.map(h=>({...h,grid:h.grid.map(r=>[...r]),player:[...h.player]})) };
+    }
+
+    function loadLevel(str) {
+      gameState = parseLevel(str);
+      movesCount=0; pushCount=0;
+      solutionMoves=null;
+      document.getElementById('btn-play-solution').classList.add('hidden');
+      updateCounters();
+      renderGrid(gameState.grid);
+      setStatus('矢印キーまたはボタンで移動してください');
+    }
+
+    function updateCounters() {
+      document.getElementById('moves-count').textContent=movesCount;
+      document.getElementById('push-count').textContent=pushCount;
+    }
+
+    const TILE_EMOJI = {
+      '#': '🧱', ' ': '', '.': '🎯', '$': '📦', '@': '🧑', '*': '✅', '+': '🧑'
+    };
+    const TILE_CLASS = {
+      '#': 'cell-wall', ' ': 'cell-floor', '.': 'cell-goal', '$': 'cell-box',
+      '@': 'cell-player', '*': 'cell-box-on-goal', '+': 'cell-player-on-goal'
+    };
+
+    function renderGrid(g, highlightPath) {
+      const rows=g.length, cols=Math.max(...g.map(r=>r.length));
+      const gridEl = document.getElementById('grid');
+      gridEl.style.gridTemplateColumns=`repeat(${cols},36px)`;
+      gridEl.innerHTML='';
+      for (let r=0;r<rows;r++) {
+        for (let c=0;c<cols;c++) {
+          const ch=g[r]?.[c]||' ';
+          const cell=document.createElement('div');
+          cell.className='cell '+(TILE_CLASS[ch]||'cell-floor');
+          cell.textContent=TILE_EMOJI[ch]||'';
+          if (highlightPath && highlightPath.some(([pr,pc])=>pr===r&&pc===c)) {
+            cell.style.outline='2px solid #22d3ee';
+          }
+          if (mode==='edit') {
+            cell.addEventListener('click',()=>onEditClick(r,c));
+          }
+          gridEl.appendChild(cell);
+        }
+      }
+    }
+
+    function movePlayer(dr, dc) {
+      if (!gameState||mode!=='play'||isPlayingAnim) return;
+      const [pr,pc]=gameState.player;
+      const nr=pr+dr, nc=pc+dc;
+      const g=gameState.grid;
+      if (!g[nr]||g[nr][nc]===undefined||g[nr][nc]===T.WALL) return;
+
+      const snapshot=cloneState(gameState);
+      let pushed=false;
+
+      if (g[nr][nc]===T.BOX||g[nr][nc]===T.BOX_GOAL) {
+        const bnr=nr+dr, bnc=nc+dc;
+        if (!g[bnr]||g[bnr][bnc]===undefined||g[bnr][bnc]===T.WALL||g[bnr][bnc]===T.BOX||g[bnr][bnc]===T.BOX_GOAL) return;
+        // Push box
+        g[bnr][bnc]=(g[bnr][bnc]===T.GOAL?T.BOX_GOAL:T.BOX);
+        g[nr][nc]=(g[nr][nc]===T.BOX_GOAL?T.GOAL:T.FLOOR);
+        pushed=true;
+        pushCount++;
+      }
+
+      // Move player
+      g[nr][nc]=(g[nr][nc]===T.GOAL?T.PLAYER_GOAL:T.PLAYER);
+      g[pr][pc]=(g[pr][pc]===T.PLAYER_GOAL?T.GOAL:T.FLOOR);
+      gameState.player=[nr,nc];
+      gameState.history.push({grid:snapshot.grid,player:snapshot.player});
+      movesCount++;
+      updateCounters();
+      renderGrid(g);
+      checkWin(g);
+    }
+
+    function checkWin(g) {
+      const hasUnplacedBox = g.some(row=>row.some(c=>c===T.BOX));
+      if (!hasUnplacedBox) {
+        setStatus('🎉 クリア！おめでとうございます！');
+      }
+    }
+
+    function undoMove() {
+      if (!gameState||gameState.history.length===0||isPlayingAnim) return;
+      const prev=gameState.history.pop();
+      gameState.grid=prev.grid;
+      gameState.player=prev.player;
+      movesCount=Math.max(0,movesCount-1);
+      updateCounters();
+      renderGrid(gameState.grid);
+      setStatus('');
+    }
+
+    // BFS Solver
+    function stateKey(g,player) {
+      return player.join(',')+':'+g.map(r=>r.join('')).join('|');
+    }
+
+    function solveBFS() {
+      if (!gameState) return;
+      setStatus('⏳ BFS探索中...');
+      setTimeout(()=>{
+        const initial = cloneState(gameState);
+        const queue = [{state:initial, moves:[]}];
+        const visited = new Set();
+        visited.add(stateKey(initial.grid,initial.player));
+        const DIRS4=[[-1,0,'↑'],[1,0,'↓'],[0,-1,'←'],[0,1,'→']];
+        let found=null;
+        const MAX_ITER=100000;
+        let iter=0;
+
+        while (queue.length>0&&iter<MAX_ITER) {
+          iter++;
+          const {state,moves}=queue.shift();
+          for (const [dr,dc,sym] of DIRS4) {
+            const ns=cloneState(state);
+            const [pr,pc]=ns.player;
+            const nr=pr+dr,nc=pc+dc;
+            const g=ns.grid;
+            if (!g[nr]||g[nr][nc]===undefined||g[nr][nc]===T.WALL) continue;
+            if (g[nr][nc]===T.BOX||g[nr][nc]===T.BOX_GOAL) {
+              const bnr=nr+dr,bnc=nc+dc;
+              if (!g[bnr]||g[bnr][bnc]===undefined||g[bnr][bnc]===T.WALL||g[bnr][bnc]===T.BOX||g[bnr][bnc]===T.BOX_GOAL) continue;
+              g[bnr][bnc]=(g[bnr][bnc]===T.GOAL?T.BOX_GOAL:T.BOX);
+              g[nr][nc]=(g[nr][nc]===T.BOX_GOAL?T.GOAL:T.FLOOR);
+            }
+            g[nr][nc]=(g[nr][nc]===T.GOAL?T.PLAYER_GOAL:T.PLAYER);
+            g[pr][pc]=(g[pr][pc]===T.PLAYER_GOAL?T.GOAL:T.FLOOR);
+            ns.player=[nr,nc];
+            const hasUnplacedBox=g.some(row=>row.some(c=>c===T.BOX));
+            if (!hasUnplacedBox) { found=[...moves,sym]; break; }
+            const key=stateKey(g,ns.player);
+            if (!visited.has(key)) { visited.add(key); queue.push({state:ns,moves:[...moves,sym]}); }
+          }
+          if (found) break;
+        }
+
+        if (found) {
+          solutionMoves=found;
+          document.getElementById('btn-play-solution').classList.remove('hidden');
+          setStatus(`✅ BFS解発見！ ${found.length}手 | 「解を再生」で確認`);
+        } else {
+          setStatus(iter>=MAX_ITER?'⚠️ 探索上限に達しました（複雑すぎます）':'⚠️ 解が見つかりません');
+        }
+      },30);
+    }
+
+    async function playSolution() {
+      if (!solutionMoves||isPlayingAnim) return;
+      isPlayingAnim=true;
+      document.getElementById('btn-restart').click();
+      await new Promise(r=>setTimeout(r,200));
+      const DIRS_MAP={'↑':[-1,0],'↓':[1,0],'←':[0,-1],'→':[0,1]};
+      for (const sym of solutionMoves) {
+        const [dr,dc]=DIRS_MAP[sym];
+        movePlayer(dr,dc);
+        await new Promise(r=>setTimeout(r,180));
+      }
+      isPlayingAnim=false;
+    }
+
+    function setStatus(msg) { document.getElementById('status-msg').textContent=msg; }
+
+    // Editor
+    function onEditClick(r,c) {
+      if (!editGrid) return;
+      const tileMap={wall:T.WALL,floor:T.FLOOR,goal:T.GOAL,box:T.BOX,player:T.PLAYER};
+      const ch=tileMap[editTile]||T.FLOOR;
+      // Remove existing player if placing new one
+      if (ch===T.PLAYER) {
+        for (let i=0;i<editGrid.length;i++) for (let j=0;j<editGrid[i].length;j++) {
+          if (editGrid[i][j]===T.PLAYER||editGrid[i][j]===T.PLAYER_GOAL) editGrid[i][j]=T.FLOOR;
+        }
+      }
+      editGrid[r][c]=ch;
+      renderGrid(editGrid);
+    }
+
+    function initEditor() {
+      editGrid=Array.from({length:8},()=>new Array(10).fill(T.FLOOR));
+      // Add border walls
+      for (let r=0;r<8;r++) { editGrid[r][0]=T.WALL; editGrid[r][9]=T.WALL; }
+      for (let c=0;c<10;c++) { editGrid[0][c]=T.WALL; editGrid[7][c]=T.WALL; }
+      editGrid[4][4]=T.PLAYER;
+      renderGrid(editGrid);
+    }
+
+    // Tab switching
+    function setMode(m) {
+      mode=m;
+      ['play','edit','levels'].forEach(t=>{
+        const btn=document.getElementById('tab-'+t);
+        btn.className=`mode-btn ${t===m?'bg-blue-700':'bg-gray-700'} px-4 py-1 rounded text-sm font-semibold`;
+      });
+      document.getElementById('play-controls').classList.toggle('hidden',m==='edit');
+      document.getElementById('edit-palette').classList.toggle('hidden',m!=='edit');
+      document.getElementById('level-selector').classList.toggle('hidden',m!=='levels');
+      document.getElementById('dpad').classList.toggle('hidden',m==='edit');
+      if (m==='edit') initEditor();
+      if (m==='levels') renderLevelSelector();
+    }
+
+    function renderLevelSelector() {
+      const sel=document.getElementById('level-selector');
+      sel.innerHTML='<span class="text-sm text-gray-400">レベル選択:</span>';
+      LEVEL_NAMES.forEach((name,i)=>{
+        const btn=document.createElement('button');
+        btn.textContent=String(i+1);
+        btn.className='bg-gray-700 hover:bg-gray-600 w-8 h-8 rounded text-sm font-bold';
+        btn.addEventListener('click',()=>{ setMode('play'); loadLevel(LEVELS[i]); setStatus(name+' をプレイ中'); });
+        sel.appendChild(btn);
+      });
+    }
+
+    document.getElementById('tab-play').addEventListener('click',()=>setMode('play'));
+    document.getElementById('tab-edit').addEventListener('click',()=>setMode('edit'));
+    document.getElementById('tab-levels').addEventListener('click',()=>setMode('levels'));
+
+    document.getElementById('btn-undo').addEventListener('click',undoMove);
+    document.getElementById('btn-restart').addEventListener('click',()=>{
+      if (gameState&&gameState.history.length>0) {
+        const first=gameState.history[0]; gameState.grid=first.grid; gameState.player=first.player; gameState.history=[];
+        movesCount=0; pushCount=0; updateCounters(); renderGrid(gameState.grid); setStatus('リセットしました');
+      }
+    });
+    document.getElementById('btn-solve').addEventListener('click',solveBFS);
+    document.getElementById('btn-play-solution').addEventListener('click',playSolution);
+    document.getElementById('btn-load-custom').addEventListener('click',()=>{
+      if (editGrid) {
+        setMode('play');
+        // Find player pos
+        let pp=[1,1];
+        for (let r=0;r<editGrid.length;r++) for (let c=0;c<editGrid[r].length;c++) {
+          if (editGrid[r][c]===T.PLAYER) pp=[r,c];
+        }
+        gameState={grid:editGrid.map(r=>[...r]),player:pp,history:[]};
+        movesCount=0;pushCount=0;updateCounters();renderGrid(editGrid);setStatus('カスタムレベルを開始！');
+      }
+    });
+
+    // Tile buttons
+    document.querySelectorAll('.tile-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        editTile=btn.dataset.tile;
+        document.querySelectorAll('.tile-btn').forEach(b=>b.style.borderColor='transparent');
+        btn.style.borderColor='#60a5fa';
+      });
+    });
+
+    // Keyboard
+    document.addEventListener('keydown',e=>{
+      if (mode!=='play') return;
+      const map={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]};
+      if (map[e.key]) { e.preventDefault(); movePlayer(...map[e.key]); }
+      if (e.key==='z'||e.key==='Z') undoMove();
+    });
+
+    document.getElementById('d-up').addEventListener('click',()=>movePlayer(-1,0));
+    document.getElementById('d-down').addEventListener('click',()=>movePlayer(1,0));
+    document.getElementById('d-left').addEventListener('click',()=>movePlayer(0,-1));
+    document.getElementById('d-right').addEventListener('click',()=>movePlayer(0,1));
+
+    // Load first classic level
+    setMode('levels');
+  </script>
+</body>
+</html>
